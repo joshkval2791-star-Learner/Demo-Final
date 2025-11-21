@@ -1,0 +1,161 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: nirvana_postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+    ports:
+      - "8083:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nirvana_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Keycloak with Pre-configured Realm (Hostname Configuration)
+  keycloak:
+    image: quay.io/keycloak/keycloak:21.1.1
+    container_name: nirvana_keycloak
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${DATABASE_NAME}
+      KC_DB_USERNAME: ${DATABASE_USER}
+      KC_DB_PASSWORD: ${DATABASE_PASSWORD}
+      
+      # Hostname Configuration - Set to external hostname for tokens and browser redirects
+      # KC_PROXY_ADDRESS_FORWARDING will make Nginx X-Forwarded-* headers override this for frontend display
+      KC_HOSTNAME: auth.keycloak-demo.local
+      KC_HOSTNAME_PORT: 443
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      
+      # Reverse Proxy Configuration (https://www.keycloak.org/server/reverseproxy)
+      KC_PROXY: "edge"  # edge = proxy terminates SSL, forwarded headers respected
+      KC_PROXY_ADDRESS_FORWARDING: "true"  # Trust X-Forwarded-* headers from Nginx
+      KC_HTTP_ENABLED: "true"  # Keycloak listens on HTTP internally
+      KC_HTTPS_ENABLED: "false"  # Nginx handles SSL/TLS
+      
+      # Database Connection Pool Configuration (improves admin console performance)
+      KC_DB_POOL_INITIAL_SIZE: 5
+      KC_DB_POOL_MIN_SIZE: 5
+      KC_DB_POOL_MAX_SIZE: 20
+      
+      IMPORT_FILES_DIR: /opt/keycloak/data/import
+      KEYCLOAK_IMPORT: /opt/keycloak/data/import/myrealm.json
+    # Remove external ports - only accessible via Nginx
+    # ports:
+    #   - "8082:8080"
+    volumes:
+      - ./myrealm.json:/opt/keycloak/data/import/myrealm.json
+    networks:
+      - nirvana_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: start-dev --import-realm
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 90s
+
+  # Spring Boot Backend (OAuth2 Resource Server)
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: nirvana_backend
+    ports:
+      - "8081:8082"
+    environment:
+      SERVER_PORT: "8082"
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      # Backend validates tokens - issuer must match JWT (HTTPS), JWK uses Docker service name (HTTP internal)
+      KEYCLOAK_ISSUER_URI: https://auth.keycloak-demo.local/realms/myrealm
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/myrealm/protocol/openid-connect/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - nirvana_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8082/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Spring Boot Frontend (OAuth2 Client)
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: nirvana_frontend
+    ports:
+      - "0.0.0.0:8080:8081"
+    environment:
+      SERVER_PORT: "8081"
+      BACKEND_URL: http://backend:8082
+      OAUTH2_CLIENT_ID: ${OAUTH2_CLIENT_ID:-springboot-app}
+      OAUTH2_CLIENT_SECRET: ${OAUTH2_CLIENT_SECRET:-X5YEeCMX3GL6BrEzVsfH0RR5jbh6qJKU}
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - nirvana_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # Nginx Reverse Proxy with HTTPS (Production-ready)
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nirvana_nginx
+    ports:
+      - "80:80"    # HTTP (redirects to HTTPS)
+      - "443:443"  # HTTPS
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - keycloak
+      - frontend
+      - backend
+    networks:
+      - nirvana_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres_data:
+  certbot_www:  # For Let's Encrypt ACME challenges
+
+networks:
+  nirvana_network:
+    driver: bridge
