@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Welcome to Your Secured Dashboard</title>
+    <style>
+        .token-box {
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            word-wrap: break-word;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Welcome to Your Secured Dashboard</h1>
+    <p>Hello, <span th:text="${username}"></span>!</p>
+    <p>Email: <span th:text="${email}"></span></p>
+    
+    <h2>Your Profile</h2>
+    <p>You have successfully authenticated with Keycloak!</p>
+    
+    <h3>Your Access Token:</h3>
+    <div class="token-box">
+        <span th:text="${accessToken}"></span>
+    </div>
+    
+    <a href="/call-service">Call Protected REST Service</a>
+    <br><br>
+    <form th:action="@{/logout}" method="post">
+        <input type="submit" value="Logout" />
+    </form>
+</body>
+</html>

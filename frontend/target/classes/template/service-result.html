@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Calendar Service Result</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .success { color: green; }
+        .error { color: red; background: #ffe6e6; padding: 20px; border-radius: 5px; }
+        pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Calendar Service Response</h1>
+    
+    <div th:if="${error}" class="error">
+        <h2>Error Occurred</h2>
+        <p><strong>Error Message:</strong> <span th:text="${error}"></span></p>
+        <p><strong>Error Type:</strong> <span th:text="${errorDetails}"></span></p>
+        <p><strong>Solution:</strong> Try logging out and logging in again, or clear your browser cookies.</p>
+    </div>
+    
+    <div th:if="${serviceData}" class="success">
+        <h2>✓ Success!</h2>
+        <p><strong>Calendar Service Response:</strong></p>
+        <pre th:text="${serviceData}"></pre>
+    </div>
+    
+    <p><a href="/secured">← Back to Secured Page</a></p>
+    <p><a href="/">← Home</a></p>
+</body>
+</html>
